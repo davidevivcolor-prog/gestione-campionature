@@ -79,9 +79,28 @@ header{position:sticky}
  .header-inner{min-height:0}
  body::before{background-size:95vw auto;opacity:.045}
 }
+
+/* Firebase Authentication */
+.auth-gate{position:fixed;inset:0;z-index:200;background:rgba(244,246,248,.98);display:flex;align-items:center;justify-content:center;padding:24px}
+.auth-gate.hidden{display:none}
+.auth-card{width:min(460px,100%);background:#fff;border:1px solid var(--line);border-radius:16px;box-shadow:0 24px 80px rgba(0,0,0,.16);padding:28px;text-align:center}
+.auth-card h2{margin:0 0 10px;font-size:24px}.auth-card p{color:var(--muted);line-height:1.5}
+.auth-status{margin-top:12px;font-size:13px}.auth-error{color:#a30f17;font-weight:700}
+.user-chip{display:none;align-items:center;gap:8px;padding:7px 10px;border:1px solid var(--line);border-radius:999px;background:#fff;font-size:12px}
+.user-chip.visible{display:inline-flex}.user-chip button{padding:5px 8px}
+.app-locked main,.app-locked footer{visibility:hidden}
+
 </style>
 </head>
-<body>
+<body class="app-locked">
+<div class="auth-gate" id="authGate">
+  <div class="auth-card">
+    <h2>Gestione Campioni</h2>
+    <p>Accesso riservato agli utenti autorizzati VivColor.</p>
+    <button class="btn-primary" id="loginBtn">Accedi con Google</button>
+    <div class="auth-status" id="authStatus">Caricamento autenticazione…</div>
+  </div>
+</div>
 <header>
   <div class="header-inner">
     <div class="brand">
@@ -89,6 +108,7 @@ header{position:sticky}
       <div><h1>Gestione Campioni</h1><small>VivColor • Laboratorio</small></div>
     </div>
     <div class="toolbar">
+      <div class="user-chip" id="userChip"><span id="userEmail"></span><button class="btn-secondary" id="logoutBtn">Esci</button></div>
       <button class="btn-secondary" onclick="openSettings()">⚙ Agenti / Email</button>
       <button class="btn-secondary" onclick="exportBackup()">⬇ Backup</button>
       <button class="btn-secondary" onclick="document.getElementById('importFile').click()">⬆ Ripristina</button>
@@ -135,7 +155,7 @@ header{position:sticky}
   </div>
 </main>
 
-<footer>Dati salvati nel browser di questo PC tramite localStorage. Esegui periodicamente un backup JSON. GitHub Pages da solo non sincronizza i dati tra più PC.</footer>
+<footer>Dati sincronizzati online tramite Google Cloud Firestore. Le modifiche vengono condivise in tempo reale tra i dispositivi autorizzati.</footer>
 
 <div class="modal" id="requestModal">
   <div class="modal-box">
@@ -197,24 +217,49 @@ header{position:sticky}
   </div>
 </div>
 
-<script>
-const STORAGE_KEY='vivcolor_campioni_v1';
-const SETTINGS_KEY='vivcolor_campioni_settings_v1';
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-app.js";
+import {
+  getFirestore, collection, doc, getDoc, getDocs, setDoc, updateDoc,
+  writeBatch, onSnapshot, serverTimestamp
+} from "https://www.gstatic.com/firebasejs/12.19.0/firebase-firestore.js";
+import {
+  getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged
+} from "https://www.gstatic.com/firebasejs/12.19.0/firebase-auth.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyDaeXcEujbvzZLGiYA-Fhral_HYAj0coCs",
+  authDomain: "gestione-campioni-f706e.firebaseapp.com",
+  projectId: "gestione-campioni-f706e",
+  storageBucket: "gestione-campioni-f706e.firebasestorage.app",
+  messagingSenderId: "167699456662",
+  appId: "1:167699456662:web:ff24a07f303edf5b1a58b7"
+};
+
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+const auth = getAuth(app);
+const provider = new GoogleAuthProvider();
+provider.setCustomParameters({prompt:'select_account'});
+
+// Account autorizzati nell'interfaccia. Le Firestore Rules devono applicare
+// lo stesso controllo lato server (vedi istruzioni fornite con questo file).
+const ALLOWED_EMAILS = ['vivcolorlab@gmail.com'];
+
+const REQUESTS_COLLECTION='richiesteCampione';
+const SETTINGS_DOC=doc(db,'config','agenti');
+const LEGACY_STORAGE_KEY='vivcolor_campioni_v1';
+const LEGACY_SETTINGS_KEY='vivcolor_campioni_settings_v1';
 
 const STATI=['LAVORO TERMINATO','IN LAVORAZIONE','LAVORO FERMO','ABBANDONATO','IN ATTESA DI DATI'];
 const ESITI=[
 'PROVATO CON ESITO POSITIVO CHE HA PORTATO AD UNA VENDITA',
 'PROVATO CON ESITO POSITIVO MA SENZA VENDITA',
 'PROVATO CON ESITO NEGATIVO DAL CLIENTE',
-'CAMPIONE A PAGAMENTO',
-'PRODUZIONE DIRETTA IN FABBRICA',
-'IN ATTESA DI RISCONTRO DAL CLIENTE DOPO 30/60GG',
-'NESSUN RISCONTRO DA CLIENTE/AGENTE',
-'ESITO NEGATIVO DAL LABORATORIO',
-'NON CONFORMITÀ RISOLTA',
-'NON CONFORMITÀ NON RISOLTA',
-'LAVORO PASSATO A SCHEDA DI PROGETTAZIONE',
-'VEDI RISCONTRO/NOTE'
+'CAMPIONE A PAGAMENTO','PRODUZIONE DIRETTA IN FABBRICA',
+'IN ATTESA DI RISCONTRO DAL CLIENTE DOPO 30/60GG','NESSUN RISCONTRO DA CLIENTE/AGENTE',
+'ESITO NEGATIVO DAL LABORATORIO','NON CONFORMITÀ RISOLTA','NON CONFORMITÀ NON RISOLTA',
+'LAVORO PASSATO A SCHEDA DI PROGETTAZIONE','VEDI RISCONTRO/NOTE'
 ];
 const LAVORAZIONI=[
 ['Formulazione',1.5],['Macinazione',1],['Magazzino',0.3],['Miscelazione',0.7],['Travaso',0.4],
@@ -222,26 +267,19 @@ const LAVORAZIONI=[
 ];
 const DEFAULT_AGENTS=['Alessandro Codutti','Alessandro Moretti','Carlotta Masé','Carmine Montesano','Corrado Terrazzani','Francesco Figliola','Giancarlo Bergamasco','Gigi Battistella','Massimo Moretti','Michele Olivieri','Michele Rottini','SEDE','SEDE PR'];
 
-let requests = loadRequests();
-let settings = loadSettings();
+let requests=[];
+let settings={agents:DEFAULT_AGENTS.map(name=>({name,email:''}))};
+let unsubscribeRequests=null;
+let currentUser=null;
 
-function loadRequests(){ try{return JSON.parse(localStorage.getItem(STORAGE_KEY))||[]}catch(e){return[]} }
-function loadSettings(){
-  try{
-    const s=JSON.parse(localStorage.getItem(SETTINGS_KEY));
-    if(s && Array.isArray(s.agents)) return s;
-  }catch(e){}
-  return {agents:DEFAULT_AGENTS.map(name=>({name,email:''}))};
-}
-function persist(){ localStorage.setItem(STORAGE_KEY,JSON.stringify(requests)); }
-function persistSettings(){ localStorage.setItem(SETTINGS_KEY,JSON.stringify(settings)); }
 function esc(v){return String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]))}
 function isoToday(){return new Date().toISOString().slice(0,10)}
 function addDays(dateStr,days){if(!dateStr)return'';const d=new Date(dateStr+'T12:00:00');d.setDate(d.getDate()+days);return d.toISOString().slice(0,10)}
-function fmtDate(s){if(!s)return'—';const [y,m,d]=s.split('-');return `${d}/${m}/${y}`}
+function fmtDate(s){if(!s)return'—';const [y,m,d]=String(s).split('-');return d&&m&&y?`${d}/${m}/${y}`:'—'}
 function money(n){return Number(n||0).toLocaleString('it-IT',{minimumFractionDigits:2,maximumFractionDigits:2})}
 function daysBetween(a,b){if(!a||!b)return null;return Math.round((new Date(b+'T12:00:00')-new Date(a+'T12:00:00'))/86400000)}
 function nextProgressive(){return requests.reduce((m,r)=>Math.max(m,Number(r.progressivo)||0),0)+1}
+function isAllowedUser(user){return !!user?.email && ALLOWED_EMAILS.includes(user.email.toLowerCase())}
 
 function badgeClass(status){
   if(status==='LAVORO TERMINATO')return'b-green';
@@ -265,19 +303,17 @@ function requestCost(r){
   return products+Number(r.spedizione||0);
 }
 
-function init(){
+function initStaticUI(){
   document.getElementById('filterStatus').innerHTML='<option value="">Tutti gli stati</option>'+STATI.map(s=>`<option>${esc(s)}</option>`).join('');
   document.getElementById('fStato').innerHTML=STATI.map(s=>`<option>${esc(s)}</option>`).join('');
   document.getElementById('fEsito').innerHTML='<option value="">—</option>'+ESITI.map(s=>`<option>${esc(s)}</option>`).join('');
   refreshAgentSelects();
-  render();
 }
 function refreshAgentSelects(){
   const names=settings.agents.map(a=>a.name).filter(Boolean).sort((a,b)=>a.localeCompare(b,'it'));
   document.getElementById('filterAgent').innerHTML='<option value="">Tutti gli agenti</option>'+names.map(s=>`<option>${esc(s)}</option>`).join('');
   document.getElementById('fAgente').innerHTML='<option value="">— Seleziona —</option>'+names.map(s=>`<option>${esc(s)}</option>`).join('');
 }
-
 function render(){
   const q=document.getElementById('search').value.trim().toLowerCase();
   const fs=document.getElementById('filterStatus').value;
@@ -285,44 +321,30 @@ function render(){
   const ar=document.getElementById('filterArchive').value;
   const filtered=requests.filter(r=>{
     const blob=[r.progressivo,r.agente,r.cliente,r.descrizione,r.note,r.esito,r.noteEsito,...(r.products||[]).flatMap(p=>[p.codice,p.lavorazione])].join(' ').toLowerCase();
-    if(q && !blob.includes(q))return false;
-    if(fs && r.stato!==fs)return false;
-    if(fa && r.agente!==fa)return false;
-    if(ar==='active' && r.archived)return false;
-    if(ar==='archived' && !r.archived)return false;
-    return true;
+    if(q && !blob.includes(q))return false;if(fs && r.stato!==fs)return false;if(fa && r.agente!==fa)return false;
+    if(ar==='active' && r.archived)return false;if(ar==='archived' && !r.archived)return false;return true;
   }).sort((a,b)=>(Number(b.progressivo)||0)-(Number(a.progressivo)||0));
 
   const tbody=document.getElementById('requestRows');
   tbody.innerHTML=filtered.map(r=>{
-    const rem=reminderState(r);
-    const codes=(r.products||[]).map(p=>p.codice).filter(Boolean);
-    return `<tr>
-      <td><strong>${esc(r.progressivo)}</strong></td>
-      <td>${esc(r.agente||'—')}</td>
-      <td><strong>${esc(r.cliente||'—')}</strong></td>
-      <td>${fmtDate(r.arrivo)}</td>
-      <td>${r.urgente==='Sì'?'<span class="badge b-red">SÌ</span>':'No'}</td>
-      <td><span class="badge ${badgeClass(r.stato)}">${esc(r.stato||'—')}</span></td>
-      <td style="max-width:330px">${esc(r.descrizione||'—')}</td>
-      <td>${codes.length?codes.map(c=>`<span class="badge b-gray">${esc(c)}</span>`).join(' '):'—'}</td>
-      <td>${fmtDate(r.evasione)}</td>
+    const rem=reminderState(r);const codes=(r.products||[]).map(p=>p.codice).filter(Boolean);
+    return `<tr><td><strong>${esc(r.progressivo)}</strong></td><td>${esc(r.agente||'—')}</td><td><strong>${esc(r.cliente||'—')}</strong></td>
+      <td>${fmtDate(r.arrivo)}</td><td>${r.urgente==='Sì'?'<span class="badge b-red">SÌ</span>':'No'}</td>
+      <td><span class="badge ${badgeClass(r.stato)}">${esc(r.stato||'—')}</span></td><td style="max-width:330px">${esc(r.descrizione||'—')}</td>
+      <td>${codes.length?codes.map(c=>`<span class="badge b-gray">${esc(c)}</span>`).join(' '):'—'}</td><td>${fmtDate(r.evasione)}</td>
       <td><span class="badge ${rem.cls}">${esc(rem.label)}</span>${rem.due?`<div class="small muted">${fmtDate(rem.due)}</div>`:''}</td>
-      <td class="right">${money(requestCost(r))}</td>
-      <td><div class="row-actions">
+      <td class="right">${money(requestCost(r))}</td><td><div class="row-actions">
         <button class="icon-btn" onclick="openRequest('${r.id}')">✎</button>
         ${r.evasione?`<button class="icon-btn" title="Prepara email in Gmail" onclick="sendGmail('${r.id}')">✉</button>`:''}
         <button class="${r.archived?'btn-green':'btn-secondary'}" style="padding:6px 9px" onclick="toggleArchive('${r.id}')">${r.archived?'Ripristina':'Archivia'}</button>
-      </div></td>
-    </tr>`;
+      </div></td></tr>`;
   }).join('');
   document.getElementById('empty').hidden=filtered.length>0;
   document.getElementById('countLabel').textContent=`${filtered.length} richieste visualizzate`;
   updateKpis();
 }
 function updateKpis(){
-  const active=requests.filter(r=>!r.archived);
-  const month=isoToday().slice(0,7);
+  const active=requests.filter(r=>!r.archived);const month=isoToday().slice(0,7);
   document.getElementById('kpiOpen').textContent=active.filter(r=>r.stato!=='LAVORO TERMINATO'&&!r.evasione).length;
   document.getElementById('kpiWorking').textContent=active.filter(r=>r.stato==='IN LAVORAZIONE').length;
   document.getElementById('kpiWaiting').textContent=active.filter(r=>['LAVORO FERMO','IN ATTESA DI DATI'].includes(r.stato)).length;
@@ -333,162 +355,116 @@ function updateKpis(){
 
 function openRequest(id){
   const r=id?requests.find(x=>x.id===id):null;
-  document.getElementById('requestTitle').textContent=r?'Modifica richiesta':'Nuova richiesta';
-  document.getElementById('editId').value=r?.id||'';
-  document.getElementById('fProgressivo').value=r?.progressivo||nextProgressive();
-  document.getElementById('fAgente').value=r?.agente||'';
-  document.getElementById('fCliente').value=r?.cliente||'';
-  document.getElementById('fArrivo').value=r?.arrivo||isoToday();
-  document.getElementById('fUrgente').value=r?.urgente||'No';
-  document.getElementById('fInizio').value=r?.inizio||'';
-  document.getElementById('fEvasione').value=r?.evasione||'';
-  document.getElementById('fDescrizione').value=r?.descrizione||'';
-  document.getElementById('fStato').value=r?.stato||'IN LAVORAZIONE';
-  document.getElementById('fNote').value=r?.note||'';
-  document.getElementById('fSpedizione').value=r?.spedizione||0;
-  document.getElementById('fEsito').value=r?.esito||'';
-  document.getElementById('fNoteEsito').value=r?.noteEsito||'';
-  document.getElementById('fTariffa').value=r?.tariffa||15;
-  document.getElementById('fFollowStatus').value=r?.followStatus||'da_fare';
-  document.getElementById('fFollowDate').value=r?.followDate||'';
-  document.getElementById('fArchived').value=String(!!r?.archived);
-  document.getElementById('productRows').innerHTML='';
-  const products=r?.products?.length?r.products:[{}];
-  products.forEach(p=>addProductRow(p));
-  updateFollowInfo();
-  document.getElementById('requestModal').classList.add('open');
+  document.getElementById('requestTitle').textContent=r?'Modifica richiesta':'Nuova richiesta';document.getElementById('editId').value=r?.id||'';
+  document.getElementById('fProgressivo').value=r?.progressivo||nextProgressive();document.getElementById('fAgente').value=r?.agente||'';document.getElementById('fCliente').value=r?.cliente||'';
+  document.getElementById('fArrivo').value=r?.arrivo||isoToday();document.getElementById('fUrgente').value=r?.urgente||'No';document.getElementById('fInizio').value=r?.inizio||'';
+  document.getElementById('fEvasione').value=r?.evasione||'';document.getElementById('fDescrizione').value=r?.descrizione||'';document.getElementById('fStato').value=r?.stato||'IN LAVORAZIONE';
+  document.getElementById('fNote').value=r?.note||'';document.getElementById('fSpedizione').value=r?.spedizione||0;document.getElementById('fEsito').value=r?.esito||'';
+  document.getElementById('fNoteEsito').value=r?.noteEsito||'';document.getElementById('fTariffa').value=r?.tariffa||15;document.getElementById('fFollowStatus').value=r?.followStatus||'da_fare';
+  document.getElementById('fFollowDate').value=r?.followDate||'';document.getElementById('fArchived').value=String(!!r?.archived);document.getElementById('productRows').innerHTML='';
+  (r?.products?.length?r.products:[{}]).forEach(p=>addProductRow(p));updateFollowInfo();document.getElementById('requestModal').classList.add('open');
 }
 function closeModal(id){document.getElementById(id).classList.remove('open')}
-
 function addProductRow(p={}){
-  const tr=document.createElement('tr');
-  tr.innerHTML=`
-    <td><input class="p-codice" value="${esc(p.codice||'')}"></td>
+  const tr=document.createElement('tr');tr.innerHTML=`<td><input class="p-codice" value="${esc(p.codice||'')}"></td>
     <td><input class="p-qty" type="number" min="0" step="0.001" value="${p.qty??''}" oninput="calcProduct(this)"></td>
     <td><select class="p-lav" onchange="workTypeChanged(this)">${LAVORAZIONI.map(([n])=>`<option ${p.lavorazione===n?'selected':''}>${esc(n)}</option>`).join('')}</select></td>
     <td><input class="p-cmp" type="number" min="0" step="0.0001" value="${p.cmp??''}" oninput="calcProduct(this)"></td>
-    <td><input class="p-ore" type="number" min="0" step="0.1" value="${p.ore??''}" oninput="calcProduct(this)"></td>
-    <td class="p-cost right">0,00</td>
+    <td><input class="p-ore" type="number" min="0" step="0.1" value="${p.ore??''}" oninput="calcProduct(this)"></td><td class="p-cost right">0,00</td>
     <td><button class="btn-danger" onclick="this.closest('tr').remove()">✕</button></td>`;
-  document.getElementById('productRows').appendChild(tr);
-  if(p.ore==null||p.ore==='') workTypeChanged(tr.querySelector('.p-lav'),false);
-  calcProduct(tr.querySelector('.p-qty'));
+  document.getElementById('productRows').appendChild(tr);if(p.ore==null||p.ore==='') workTypeChanged(tr.querySelector('.p-lav'),false);calcProduct(tr.querySelector('.p-qty'));
 }
-function workTypeChanged(sel,recalc=true){
-  const row=sel.closest('tr'); const found=LAVORAZIONI.find(x=>x[0]===sel.value);
-  if(found && found[1]!=null) row.querySelector('.p-ore').value=found[1];
-  if(recalc)calcProduct(sel);
-}
-function calcProduct(el){
-  const row=el.closest('tr'); if(!row)return;
-  const qty=Number(row.querySelector('.p-qty').value||0), cmp=Number(row.querySelector('.p-cmp').value||0), ore=Number(row.querySelector('.p-ore').value||0);
-  const tariffa=Number(document.getElementById('fTariffa').value||15);
-  row.querySelector('.p-cost').textContent=money(qty*cmp+ore*tariffa);
-}
-document.getElementById('fTariffa').addEventListener('input',()=>document.querySelectorAll('#productRows tr').forEach(r=>calcProduct(r.querySelector('.p-qty'))));
-document.getElementById('fEvasione').addEventListener('change',updateFollowInfo);
-function updateFollowInfo(){
-  const e=document.getElementById('fEvasione').value;
-  const box=document.getElementById('followInfo');
-  box.innerHTML=e?`Data teorica follow-up a 30 giorni: <strong>${fmtDate(addDays(e,30))}</strong>`:'Inserisci la data di evasione per calcolare il follow-up a 30 giorni.';
-}
+function workTypeChanged(sel,recalc=true){const row=sel.closest('tr');const found=LAVORAZIONI.find(x=>x[0]===sel.value);if(found&&found[1]!=null)row.querySelector('.p-ore').value=found[1];if(recalc)calcProduct(sel)}
+function calcProduct(el){const row=el.closest('tr');if(!row)return;const qty=Number(row.querySelector('.p-qty').value||0),cmp=Number(row.querySelector('.p-cmp').value||0),ore=Number(row.querySelector('.p-ore').value||0);const tariffa=Number(document.getElementById('fTariffa').value||15);row.querySelector('.p-cost').textContent=money(qty*cmp+ore*tariffa)}
+function updateFollowInfo(){const e=document.getElementById('fEvasione').value;document.getElementById('followInfo').innerHTML=e?`Data teorica follow-up a 30 giorni: <strong>${fmtDate(addDays(e,30))}</strong>`:'Inserisci la data di evasione per calcolare il follow-up a 30 giorni.'}
 
-function saveRequest(){
+async function saveRequest(){
+  if(!currentUser)return alert('Sessione non valida. Effettua nuovamente il login.');
   const id=document.getElementById('editId').value||crypto.randomUUID();
-  const products=[...document.querySelectorAll('#productRows tr')].map(row=>({
-    codice:row.querySelector('.p-codice').value.trim(),
-    qty:Number(row.querySelector('.p-qty').value||0),
-    lavorazione:row.querySelector('.p-lav').value,
-    cmp:Number(row.querySelector('.p-cmp').value||0),
-    ore:Number(row.querySelector('.p-ore').value||0)
-  })).filter(p=>p.codice||p.qty||p.cmp||p.ore);
-  const r={
-    id, progressivo:Number(document.getElementById('fProgressivo').value||nextProgressive()),
-    agente:document.getElementById('fAgente').value, cliente:document.getElementById('fCliente').value.trim(),
-    arrivo:document.getElementById('fArrivo').value, urgente:document.getElementById('fUrgente').value,
-    inizio:document.getElementById('fInizio').value, evasione:document.getElementById('fEvasione').value,
-    descrizione:document.getElementById('fDescrizione').value.trim(), stato:document.getElementById('fStato').value,
-    note:document.getElementById('fNote').value.trim(), spedizione:Number(document.getElementById('fSpedizione').value||0),
-    products, esito:document.getElementById('fEsito').value, noteEsito:document.getElementById('fNoteEsito').value.trim(),
-    tariffa:Number(document.getElementById('fTariffa').value||15), followStatus:document.getElementById('fFollowStatus').value,
-    followDate:document.getElementById('fFollowDate').value, archived:document.getElementById('fArchived').value==='true',
-    updatedAt:new Date().toISOString()
-  };
+  const old=requests.find(x=>x.id===id);
+  const products=[...document.querySelectorAll('#productRows tr')].map(row=>({codice:row.querySelector('.p-codice').value.trim(),qty:Number(row.querySelector('.p-qty').value||0),lavorazione:row.querySelector('.p-lav').value,cmp:Number(row.querySelector('.p-cmp').value||0),ore:Number(row.querySelector('.p-ore').value||0)})).filter(p=>p.codice||p.qty||p.cmp||p.ore);
+  const r={id,progressivo:Number(document.getElementById('fProgressivo').value||nextProgressive()),agente:document.getElementById('fAgente').value,cliente:document.getElementById('fCliente').value.trim(),arrivo:document.getElementById('fArrivo').value,urgente:document.getElementById('fUrgente').value,inizio:document.getElementById('fInizio').value,evasione:document.getElementById('fEvasione').value,descrizione:document.getElementById('fDescrizione').value.trim(),stato:document.getElementById('fStato').value,note:document.getElementById('fNote').value.trim(),spedizione:Number(document.getElementById('fSpedizione').value||0),products,esito:document.getElementById('fEsito').value,noteEsito:document.getElementById('fNoteEsito').value.trim(),tariffa:Number(document.getElementById('fTariffa').value||15),followStatus:document.getElementById('fFollowStatus').value,followDate:document.getElementById('fFollowDate').value,archived:document.getElementById('fArchived').value==='true',createdAt:old?.createdAt||new Date().toISOString(),updatedAt:new Date().toISOString(),updatedBy:currentUser.email};
   if(!r.cliente){alert('Inserisci il cliente.');return}
-  const idx=requests.findIndex(x=>x.id===id);
-  if(idx>=0)requests[idx]=r;else requests.push({...r,createdAt:new Date().toISOString()});
-  persist(); closeModal('requestModal'); render();
+  try{await setDoc(doc(db,REQUESTS_COLLECTION,id),r);closeModal('requestModal')}catch(e){console.error(e);alert('Errore nel salvataggio su Firebase: '+e.message)}
 }
-function toggleArchive(id){
-  const r=requests.find(x=>x.id===id); if(!r)return;
-  r.archived=!r.archived; r.updatedAt=new Date().toISOString(); persist(); render();
-}
+async function toggleArchive(id){const r=requests.find(x=>x.id===id);if(!r)return;try{await updateDoc(doc(db,REQUESTS_COLLECTION,id),{archived:!r.archived,updatedAt:new Date().toISOString(),updatedBy:currentUser.email})}catch(e){alert('Errore Firebase: '+e.message)}}
 
 function agentEmail(name){return settings.agents.find(a=>a.name===name)?.email||''}
 const GMAIL_SENDER='vivcolorlab@gmail.com';
-function sendGmail(id){
-  const r=requests.find(x=>x.id===id); if(!r)return;
-  const email=agentEmail(r.agente);
-  if(!email){alert(`Nessuna email impostata per ${r.agente||'questo agente'}. Apri "Agenti / Email".`);return}
+async function sendGmail(id){
+  const r=requests.find(x=>x.id===id);if(!r)return;const email=agentEmail(r.agente);if(!email){alert(`Nessuna email impostata per ${r.agente||'questo agente'}. Apri "Agenti / Email".`);return}
   const subject=`Follow-up campione ${r.progressivo} - ${r.cliente}`;
-  const body=`Buongiorno ${r.agente||''},
-
-a distanza di circa 30 giorni dall'evasione del campione relativo a ${r.cliente}, vorremmo sapere se avete ricevuto un riscontro.
-
-Riferimento richiesta: ${r.progressivo}
-Cliente: ${r.cliente}
-Data evasione: ${fmtDate(r.evasione)}
-Descrizione: ${r.descrizione||'-'}
-
-Grazie.`;
+  const body=`Buongiorno ${r.agente||''},\n\na distanza di circa 30 giorni dall'evasione del campione relativo a ${r.cliente}, vorremmo sapere se avete ricevuto un riscontro.\n\nRiferimento richiesta: ${r.progressivo}\nCliente: ${r.cliente}\nData evasione: ${fmtDate(r.evasione)}\nDescrizione: ${r.descrizione||'-'}\n\nGrazie.`;
   const url=`https://mail.google.com/mail/?authuser=${encodeURIComponent(GMAIL_SENDER)}&view=cm&fs=1&to=${encodeURIComponent(email)}&su=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-  const gmailTab=window.open(url,'_blank','noopener,noreferrer');
-  if(!gmailTab){alert('Il browser potrebbe aver bloccato la finestra Gmail. Consenti i popup e riprova.');return;}
+  const gmailTab=window.open(url,'_blank','noopener,noreferrer');if(!gmailTab){alert('Il browser potrebbe aver bloccato la finestra Gmail. Consenti i popup e riprova.');return}
   if(confirm('Si è aperta una bozza Gmail. Verifica che il mittente sia vivcolorlab@gmail.com e invia il messaggio. Hai effettivamente inviato la mail?')){
-    r.followStatus='inviato'; r.followDate=isoToday(); r.updatedAt=new Date().toISOString(); persist(); render();
+    try{await updateDoc(doc(db,REQUESTS_COLLECTION,id),{followStatus:'inviato',followDate:isoToday(),updatedAt:new Date().toISOString(),updatedBy:currentUser.email})}catch(e){alert('Mail aperta, ma non sono riuscito ad aggiornare Firebase: '+e.message)}
   }
 }
 
-function openSettings(){
-  const box=document.getElementById('agentSettings'); box.innerHTML='';
-  settings.agents.forEach(a=>appendAgentRow(a.name,a.email));
-  document.getElementById('settingsModal').classList.add('open');
-}
-function appendAgentRow(name='',email=''){
-  const row=document.createElement('div'); row.className='settings-row';
-  row.innerHTML=`<input class="sa-name" placeholder="Nome agente" value="${esc(name)}"><input class="sa-email" type="email" placeholder="nome@azienda.it" value="${esc(email)}"><button class="btn-danger" onclick="this.parentElement.remove()">Rimuovi</button>`;
-  document.getElementById('agentSettings').appendChild(row);
-}
+function openSettings(){const box=document.getElementById('agentSettings');box.innerHTML='';settings.agents.forEach(a=>appendAgentRow(a.name,a.email));document.getElementById('settingsModal').classList.add('open')}
+function appendAgentRow(name='',email=''){const row=document.createElement('div');row.className='settings-row';row.innerHTML=`<input class="sa-name" placeholder="Nome agente" value="${esc(name)}"><input class="sa-email" type="email" placeholder="nome@azienda.it" value="${esc(email)}"><button class="btn-danger" onclick="this.parentElement.remove()">Rimuovi</button>`;document.getElementById('agentSettings').appendChild(row)}
 function addAgentSetting(){appendAgentRow()}
-function saveSettings(){
-  settings.agents=[...document.querySelectorAll('.settings-row')].map(r=>({name:r.querySelector('.sa-name').value.trim(),email:r.querySelector('.sa-email').value.trim()})).filter(a=>a.name);
-  settings.agents.sort((a,b)=>a.name.localeCompare(b.name,'it'));
-  persistSettings(); refreshAgentSelects(); closeModal('settingsModal'); render();
+async function saveSettings(){
+  settings.agents=[...document.querySelectorAll('.settings-row')].map(r=>({name:r.querySelector('.sa-name').value.trim(),email:r.querySelector('.sa-email').value.trim()})).filter(a=>a.name);settings.agents.sort((a,b)=>a.name.localeCompare(b.name,'it'));
+  try{await setDoc(SETTINGS_DOC,{agents:settings.agents,updatedAt:new Date().toISOString(),updatedBy:currentUser.email});refreshAgentSelects();closeModal('settingsModal');render()}catch(e){alert('Errore nel salvataggio impostazioni: '+e.message)}
+}
+function exportBackup(){const data={version:2,exportedAt:new Date().toISOString(),requests,settings};const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`vivcolor-campioni-backup-${isoToday()}.json`;a.click();URL.revokeObjectURL(a.href)}
+async function importBackup(ev){
+  const file=ev.target.files[0];if(!file)return;const reader=new FileReader();reader.onload=async()=>{try{const data=JSON.parse(reader.result);if(!Array.isArray(data.requests))throw new Error('Formato non valido');if(!confirm(`Importare ${data.requests.length} richieste nel database cloud? Le richieste con lo stesso ID verranno sovrascritte.`))return;const batch=writeBatch(db);for(const r of data.requests){const id=r.id||crypto.randomUUID();batch.set(doc(db,REQUESTS_COLLECTION,id),{...r,id,updatedAt:new Date().toISOString(),updatedBy:currentUser.email})}if(data.settings?.agents)batch.set(SETTINGS_DOC,{agents:data.settings.agents,updatedAt:new Date().toISOString(),updatedBy:currentUser.email});await batch.commit();alert('Importazione completata.')}catch(e){console.error(e);alert('File di backup non valido o errore Firebase: '+e.message)}finally{ev.target.value=''}};reader.readAsText(file)
 }
 
-function exportBackup(){
-  const data={version:1,exportedAt:new Date().toISOString(),requests,settings};
-  const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});
-  const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`vivcolor-campioni-backup-${isoToday()}.json`;a.click();URL.revokeObjectURL(a.href);
+async function loadCloudSettings(){
+  const snap=await getDoc(SETTINGS_DOC);
+  if(snap.exists()&&Array.isArray(snap.data().agents)){settings=snap.data();}
+  else{
+    try{const legacy=JSON.parse(localStorage.getItem(LEGACY_SETTINGS_KEY)||'null');if(legacy?.agents)settings=legacy}catch(e){}
+    await setDoc(SETTINGS_DOC,{agents:settings.agents,createdAt:new Date().toISOString(),createdBy:currentUser.email});
+  }
+  refreshAgentSelects();
 }
-function importBackup(ev){
-  const file=ev.target.files[0]; if(!file)return;
-  const reader=new FileReader();
-  reader.onload=()=>{
-    try{
-      const data=JSON.parse(reader.result);
-      if(!Array.isArray(data.requests))throw new Error('Formato non valido');
-      if(!confirm(`Ripristinare ${data.requests.length} richieste? I dati attuali verranno sostituiti.`))return;
-      requests=data.requests; if(data.settings)settings=data.settings; persist();persistSettings();refreshAgentSelects();render();
-      alert('Ripristino completato.');
-    }catch(e){alert('File di backup non valido.')}
-    ev.target.value='';
-  };
-  reader.readAsText(file);
+async function migrateLegacyIfNeeded(){
+  let legacy=[];try{legacy=JSON.parse(localStorage.getItem(LEGACY_STORAGE_KEY)||'[]')||[]}catch(e){}
+  if(!Array.isArray(legacy)||!legacy.length)return;
+  const cloud=await getDocs(collection(db,REQUESTS_COLLECTION));
+  if(!cloud.empty)return;
+  if(!confirm(`Ho trovato ${legacy.length} richieste salvate in questo browser. Vuoi copiarle ora nel database cloud?`))return;
+  const batch=writeBatch(db);for(const r of legacy){const id=r.id||crypto.randomUUID();batch.set(doc(db,REQUESTS_COLLECTION,id),{...r,id,updatedAt:new Date().toISOString(),updatedBy:currentUser.email})}await batch.commit();
+  alert('Migrazione completata. I dati sono ora nel database cloud.');
+}
+function startRealtime(){
+  if(unsubscribeRequests)unsubscribeRequests();
+  unsubscribeRequests=onSnapshot(collection(db,REQUESTS_COLLECTION),snap=>{requests=snap.docs.map(d=>({id:d.id,...d.data()}));render()},err=>{console.error(err);alert('Errore di sincronizzazione Firestore: '+err.message)});
+}
+async function enterApp(user){
+  currentUser=user;document.body.classList.remove('app-locked');document.getElementById('authGate').classList.add('hidden');document.getElementById('userEmail').textContent=user.email;document.getElementById('userChip').classList.add('visible');
+  await loadCloudSettings();await migrateLegacyIfNeeded();startRealtime();
+}
+function lockApp(message='Accedi con Google per continuare.'){
+  currentUser=null;if(unsubscribeRequests){unsubscribeRequests();unsubscribeRequests=null}requests=[];document.body.classList.add('app-locked');document.getElementById('authGate').classList.remove('hidden');document.getElementById('userChip').classList.remove('visible');document.getElementById('authStatus').textContent=message;render();
 }
 
+async function doLogin(){
+  const status=document.getElementById('authStatus');status.className='auth-status';
+  if(location.protocol==='file:'){status.className='auth-status auth-error';status.textContent='Per il login Google apri questa pagina dal sito GitHub Pages, non facendo doppio clic sul file HTML.';return}
+  status.textContent='Apertura login Google…';
+  try{await signInWithPopup(auth,provider)}catch(e){console.error(e);status.className='auth-status auth-error';status.textContent=e.code==='auth/unauthorized-domain'?'Dominio non autorizzato in Firebase. Aggiungi il dominio GitHub Pages in Authentication → Impostazioni → Domini autorizzati.':'Errore login: '+e.message}
+}
+
+initStaticUI();
+document.getElementById('loginBtn').addEventListener('click',doLogin);
+document.getElementById('logoutBtn').addEventListener('click',()=>signOut(auth));
+document.getElementById('fTariffa').addEventListener('input',()=>document.querySelectorAll('#productRows tr').forEach(r=>calcProduct(r.querySelector('.p-qty'))));
+document.getElementById('fEvasione').addEventListener('change',updateFollowInfo);
 window.addEventListener('click',e=>{if(e.target.classList.contains('modal'))e.target.classList.remove('open')});
-init();
+
+onAuthStateChanged(auth,async user=>{
+  if(!user){lockApp();return}
+  if(!isAllowedUser(user)){await signOut(auth);lockApp(`Accesso negato: ${user.email} non è autorizzato.`);return}
+  try{await enterApp(user)}catch(e){console.error(e);lockApp('Errore durante il caricamento Firebase: '+e.message)}
+});
+
+Object.assign(window,{render,openRequest,closeModal,addProductRow,workTypeChanged,calcProduct,saveRequest,toggleArchive,sendGmail,openSettings,addAgentSetting,saveSettings,exportBackup,importBackup});
 </script>
 </body>
 </html>
