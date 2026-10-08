@@ -90,6 +90,21 @@ header{position:sticky}
 .user-chip.visible{display:inline-flex}.user-chip button{padding:5px 8px}
 .app-locked main,.app-locked footer{visibility:hidden}
 
+/* Statistiche e azioni avanzate */
+.stats-modal-box{width:min(1280px,100%)}
+.stats-toolbar{display:flex;gap:10px;align-items:end;flex-wrap:wrap;margin-bottom:16px}
+.stats-grid{display:grid;grid-template-columns:repeat(4,minmax(170px,1fr));gap:14px;margin-bottom:18px}
+.stat-card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:16px;box-shadow:var(--shadow)}
+.stat-card .n{font-size:27px;font-weight:800}.stat-card .l{font-size:12px;color:var(--muted);margin-top:3px}
+.charts-grid{display:grid;grid-template-columns:1.2fr 1fr;gap:16px;margin-top:16px}
+.chart-card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:16px;min-height:330px}
+.chart-card h3{font-size:14px;margin:0 0 12px}.chart-wrap{position:relative;height:280px}
+.stats-table{min-width:0}.stats-table th,.stats-table td{position:static}
+.trash-btn{color:#a70f15;border-color:#ffd1d3;background:#fff0f0;display:inline-grid;place-items:center}
+.trash-btn:hover{background:#ffe2e4}.trash-btn svg{width:16px;height:16px;pointer-events:none}
+@media(max-width:950px){.stats-grid{grid-template-columns:repeat(2,1fr)}.charts-grid{grid-template-columns:1fr}}
+@media(max-width:560px){.stats-grid{grid-template-columns:1fr}}
+
 </style>
 </head>
 <body class="app-locked">
@@ -110,6 +125,7 @@ header{position:sticky}
     <div class="toolbar">
       <div class="user-chip" id="userChip"><span id="userEmail"></span><button class="btn-secondary" id="logoutBtn">Esci</button></div>
       <button class="btn-secondary" onclick="openSettings()">⚙ Agenti / Email</button>
+      <button class="btn-secondary" onclick="openStatistics()">📊 Statistiche</button>
       <button class="btn-secondary" onclick="exportBackup()">⬇ Backup</button>
       <button class="btn-secondary" onclick="document.getElementById('importFile').click()">⬆ Ripristina</button>
       <input id="importFile" type="file" accept=".json" hidden onchange="importBackup(event)">
@@ -217,10 +233,45 @@ header{position:sticky}
   </div>
 </div>
 
+<div class="modal" id="statsModal">
+  <div class="modal-box stats-modal-box">
+    <div class="modal-head"><h2>Statistiche richieste campione</h2><button class="icon-btn" onclick="closeModal('statsModal')">✕</button></div>
+    <div class="modal-body">
+      <div class="stats-toolbar">
+        <div class="field"><label>Anno di analisi</label><select id="statsYear" onchange="renderStatistics()"></select></div>
+        <button class="btn-primary" onclick="exportStatisticsPDF()">⬇ Scarica report PDF</button>
+        <div class="small muted">Le statistiche usano la data di evasione; se assente, la data di arrivo.</div>
+      </div>
+      <div class="stats-grid">
+        <div class="stat-card"><div class="n" id="stTotal">0</div><div class="l">Campioni totali</div></div>
+        <div class="stat-card"><div class="n" id="stUrgent">0</div><div class="l">Campioni urgenti</div></div>
+        <div class="stat-card"><div class="n" id="stNotUrgent">0</div><div class="l">Campioni non urgenti</div></div>
+        <div class="stat-card"><div class="n" id="stMonthlyAvg">0</div><div class="l">Media campioni / mese</div></div>
+        <div class="stat-card"><div class="n" id="stFollowSent">0</div><div class="l">Follow-up inviati / gestiti</div></div>
+        <div class="stat-card"><div class="n" id="stResponses">0</div><div class="l">Risposte con esito</div></div>
+        <div class="stat-card"><div class="n" id="stResponseRate">0%</div><div class="l">Tasso risposta ai follow-up</div></div>
+        <div class="stat-card"><div class="n" id="stTopProduct">—</div><div class="l">Prodotto più richiesto</div></div>
+      </div>
+      <div class="charts-grid">
+        <div class="chart-card"><h3>Campioni per mese</h3><div class="chart-wrap"><canvas id="monthlyChart"></canvas></div></div>
+        <div class="chart-card"><h3>Urgenza</h3><div class="chart-wrap"><canvas id="urgencyChart"></canvas></div></div>
+        <div class="chart-card"><h3>Esiti dopo follow-up</h3><div class="chart-wrap"><canvas id="outcomeChart"></canvas></div></div>
+        <div class="chart-card"><h3>Prodotti più richiesti</h3><div class="chart-wrap"><canvas id="productChart"></canvas></div></div>
+      </div>
+      <div class="section-title">Dettaglio prodotti più richiesti</div>
+      <div class="table-wrap"><table class="stats-table"><thead><tr><th>Prodotto</th><th>N. richieste</th><th>Quantità totale Kg</th></tr></thead><tbody id="topProductsRows"></tbody></table></div>
+    </div>
+    <div class="modal-foot"><button class="btn-secondary" onclick="closeModal('statsModal')">Chiudi</button><button class="btn-primary" onclick="exportStatisticsPDF()">Scarica PDF</button></div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js"></script>
+
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-app.js";
 import {
-  getFirestore, collection, doc, getDoc, getDocs, setDoc, updateDoc,
+  getFirestore, collection, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc,
   writeBatch, onSnapshot, serverTimestamp
 } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-firestore.js";
 import {
@@ -337,6 +388,7 @@ function render(){
         <button class="icon-btn" onclick="openRequest('${r.id}')">✎</button>
         ${r.evasione?`<button class="icon-btn" title="Prepara email in Gmail" onclick="sendGmail('${r.id}')">✉</button>`:''}
         <button class="${r.archived?'btn-green':'btn-secondary'}" style="padding:6px 9px" onclick="toggleArchive('${r.id}')">${r.archived?'Ripristina':'Archivia'}</button>
+        <button class="icon-btn trash-btn" title="Elimina definitivamente" aria-label="Elimina richiesta" onclick="deleteRequest('${r.id}')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6l-1 14H6L5 6"></path><path d="M8 6V4h8v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg></button>
       </div></td></tr>`;
   }).join('');
   document.getElementById('empty').hidden=filtered.length>0;
@@ -389,6 +441,13 @@ async function saveRequest(){
 }
 async function toggleArchive(id){const r=requests.find(x=>x.id===id);if(!r)return;try{await updateDoc(doc(db,REQUESTS_COLLECTION,id),{archived:!r.archived,updatedAt:new Date().toISOString(),updatedBy:currentUser.email})}catch(e){alert('Errore Firebase: '+e.message)}}
 
+async function deleteRequest(id){
+  const r=requests.find(x=>x.id===id);if(!r)return;
+  const label=`${r.progressivo||''}${r.cliente?' - '+r.cliente:''}`.trim();
+  if(!confirm(`Eliminare definitivamente la richiesta ${label || id}?\n\nQuesta operazione cancellerà il documento da Firestore e non può essere annullata.`))return;
+  try{await deleteDoc(doc(db,REQUESTS_COLLECTION,id))}catch(e){console.error(e);alert('Errore durante l\'eliminazione da Firebase: '+e.message)}
+}
+
 function agentEmail(name){return settings.agents.find(a=>a.name===name)?.email||''}
 const GMAIL_SENDER='vivcolorlab@gmail.com';
 async function sendGmail(id){
@@ -400,6 +459,80 @@ async function sendGmail(id){
   if(confirm('Si è aperta una bozza Gmail. Verifica che il mittente sia vivcolorlab@gmail.com e invia il messaggio. Hai effettivamente inviato la mail?')){
     try{await updateDoc(doc(db,REQUESTS_COLLECTION,id),{followStatus:'inviato',followDate:isoToday(),updatedAt:new Date().toISOString(),updatedBy:currentUser.email})}catch(e){alert('Mail aperta, ma non sono riuscito ad aggiornare Firebase: '+e.message)}
   }
+}
+
+
+let statsCharts={};
+const MONTH_NAMES=['Gen','Feb','Mar','Apr','Mag','Giu','Lug','Ago','Set','Ott','Nov','Dic'];
+function requestStatDate(r){return r.evasione||r.arrivo||String(r.createdAt||'').slice(0,10)||''}
+function statsYearValue(){return Number(document.getElementById('statsYear')?.value)||new Date().getFullYear()}
+function destroyStatsCharts(){Object.values(statsCharts).forEach(c=>{try{c.destroy()}catch(e){}});statsCharts={}}
+function isResponseOutcome(esito){
+  if(!esito)return false;
+  return !['IN ATTESA DI RISCONTRO DAL CLIENTE DOPO 30/60GG','NESSUN RISCONTRO DA CLIENTE/AGENTE'].includes(esito);
+}
+function calculateStatistics(year=statsYearValue()){
+  const yearRows=requests.filter(r=>requestStatDate(r).startsWith(String(year)));
+  const urgent=yearRows.filter(r=>r.urgente==='Sì').length;
+  const notUrgent=yearRows.length-urgent;
+  const monthly=Array(12).fill(0);
+  yearRows.forEach(r=>{const d=requestStatDate(r);const m=Number(d.slice(5,7));if(m>=1&&m<=12)monthly[m-1]++});
+  const now=new Date();const divisor=year===now.getFullYear()?Math.max(1,now.getMonth()+1):12;
+  const monthlyAvg=yearRows.length/divisor;
+  const followRows=yearRows.filter(r=>['inviato','contattato'].includes(r.followStatus));
+  const responses=followRows.filter(r=>isResponseOutcome(r.esito));
+  const outcomeMap={};
+  responses.forEach(r=>{const k=r.esito||'Senza esito';outcomeMap[k]=(outcomeMap[k]||0)+1});
+  const productMap={};
+  yearRows.forEach(r=>{const seen=new Set();(r.products||[]).forEach(p=>{const code=(p.codice||'').trim();if(!code)return;if(!productMap[code])productMap[code]={requests:0,qty:0};productMap[code].qty+=Number(p.qty)||0;if(!seen.has(code)){productMap[code].requests++;seen.add(code)}})});
+  const products=Object.entries(productMap).map(([code,v])=>({code,...v})).sort((a,b)=>b.requests-a.requests||b.qty-a.qty||a.code.localeCompare(b.code,'it'));
+  return {year,yearRows,urgent,notUrgent,monthly,monthlyAvg,followRows,responses,responseRate:followRows.length?responses.length/followRows.length*100:0,outcomeMap,products};
+}
+function fillStatsYears(){
+  const sel=document.getElementById('statsYear');if(!sel)return;
+  const current=new Date().getFullYear();const years=[...new Set(requests.map(r=>Number(requestStatDate(r).slice(0,4))).filter(y=>y>2000&&y<3000).concat([current]))].sort((a,b)=>b-a);
+  const keep=Number(sel.value)||current;sel.innerHTML=years.map(y=>`<option value="${y}">${y}</option>`).join('');sel.value=years.includes(keep)?String(keep):String(years[0]);
+}
+function openStatistics(){fillStatsYears();document.getElementById('statsModal').classList.add('open');setTimeout(renderStatistics,0)}
+function renderStatistics(){
+  fillStatsYears();const data=calculateStatistics();
+  document.getElementById('stTotal').textContent=data.yearRows.length;
+  document.getElementById('stUrgent').textContent=data.urgent;
+  document.getElementById('stNotUrgent').textContent=data.notUrgent;
+  document.getElementById('stMonthlyAvg').textContent=data.monthlyAvg.toLocaleString('it-IT',{maximumFractionDigits:1});
+  document.getElementById('stFollowSent').textContent=data.followRows.length;
+  document.getElementById('stResponses').textContent=data.responses.length;
+  document.getElementById('stResponseRate').textContent=data.responseRate.toLocaleString('it-IT',{maximumFractionDigits:1})+'%';
+  document.getElementById('stTopProduct').textContent=data.products[0]?.code||'—';
+  document.getElementById('topProductsRows').innerHTML=data.products.slice(0,15).map(p=>`<tr><td><strong>${esc(p.code)}</strong></td><td>${p.requests}</td><td>${Number(p.qty).toLocaleString('it-IT',{maximumFractionDigits:2})}</td></tr>`).join('')||'<tr><td colspan="3" class="muted">Nessun prodotto disponibile per l’anno selezionato.</td></tr>';
+  destroyStatsCharts();
+  if(!window.Chart)return;
+  const common={responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'bottom'}}};
+  statsCharts.monthly=new Chart(document.getElementById('monthlyChart'),{type:'bar',data:{labels:MONTH_NAMES,datasets:[{label:'Campioni',data:data.monthly}]},options:{...common,scales:{y:{beginAtZero:true,ticks:{precision:0}}}}});
+  statsCharts.urgency=new Chart(document.getElementById('urgencyChart'),{type:'doughnut',data:{labels:['Urgenti','Non urgenti'],datasets:[{data:[data.urgent,data.notUrgent]}]},options:common});
+  const outcomes=Object.entries(data.outcomeMap).sort((a,b)=>b[1]-a[1]);
+  statsCharts.outcomes=new Chart(document.getElementById('outcomeChart'),{type:'bar',data:{labels:outcomes.map(x=>x[0]),datasets:[{label:'Risposte',data:outcomes.map(x=>x[1])}]},options:{...common,indexAxis:'y',scales:{x:{beginAtZero:true,ticks:{precision:0}}},plugins:{legend:{display:false}}}});
+  const top=data.products.slice(0,10);
+  statsCharts.products=new Chart(document.getElementById('productChart'),{type:'bar',data:{labels:top.map(p=>p.code),datasets:[{label:'N. richieste',data:top.map(p=>p.requests)}]},options:{...common,indexAxis:'y',scales:{x:{beginAtZero:true,ticks:{precision:0}}},plugins:{legend:{display:false}}}});
+}
+async function exportStatisticsPDF(){
+  if(!window.jspdf?.jsPDF){alert('Libreria PDF non disponibile. Controlla la connessione internet e riprova.');return}
+  renderStatistics();await new Promise(r=>setTimeout(r,250));
+  const data=calculateStatistics();const {jsPDF}=window.jspdf;const pdf=new jsPDF({orientation:'portrait',unit:'mm',format:'a4'});
+  const margin=14;let y=16;const pageW=210;
+  pdf.setFont('helvetica','bold');pdf.setFontSize(17);pdf.text('VivColor - Report statistiche campioni',margin,y);y+=8;
+  pdf.setFont('helvetica','normal');pdf.setFontSize(10);pdf.text(`Anno: ${data.year}   Generato il: ${new Date().toLocaleDateString('it-IT')}`,margin,y);y+=8;
+  pdf.setFontSize(11);
+  const summary=[`Campioni totali: ${data.yearRows.length}`,`Urgenti: ${data.urgent}   Non urgenti: ${data.notUrgent}`,`Media campioni/mese: ${data.monthlyAvg.toLocaleString('it-IT',{maximumFractionDigits:1})}`,`Follow-up inviati/gestiti: ${data.followRows.length}`,`Risposte con esito: ${data.responses.length}`,`Tasso risposta: ${data.responseRate.toLocaleString('it-IT',{maximumFractionDigits:1})}%`,`Prodotto piu richiesto: ${data.products[0]?.code||'—'}`];
+  summary.forEach(t=>{pdf.text(t,margin,y);y+=6});y+=3;
+  const addChart=(canvas,title)=>{if(!canvas)return;const img=canvas.toDataURL('image/png',1);if(y+72>285){pdf.addPage();y=16}pdf.setFont('helvetica','bold');pdf.setFontSize(12);pdf.text(title,margin,y);y+=4;pdf.addImage(img,'PNG',margin,y,pageW-margin*2,62);y+=68};
+  addChart(document.getElementById('monthlyChart'),'Campioni per mese');
+  addChart(document.getElementById('urgencyChart'),'Urgenza');
+  addChart(document.getElementById('outcomeChart'),'Esiti dopo follow-up');
+  addChart(document.getElementById('productChart'),'Prodotti piu richiesti');
+  if(y+20>285){pdf.addPage();y=16}pdf.setFont('helvetica','bold');pdf.setFontSize(12);pdf.text('Top prodotti',margin,y);y+=7;pdf.setFont('helvetica','normal');pdf.setFontSize(9);
+  data.products.slice(0,15).forEach((p,i)=>{if(y>282){pdf.addPage();y=16}pdf.text(`${i+1}. ${p.code} - ${p.requests} richieste - ${Number(p.qty).toLocaleString('it-IT',{maximumFractionDigits:2})} Kg`,margin,y);y+=5});
+  pdf.save(`vivcolor-report-campioni-${data.year}-${isoToday()}.pdf`);
 }
 
 function openSettings(){const box=document.getElementById('agentSettings');box.innerHTML='';settings.agents.forEach(a=>appendAgentRow(a.name,a.email));document.getElementById('settingsModal').classList.add('open')}
@@ -434,7 +567,7 @@ async function migrateLegacyIfNeeded(){
 }
 function startRealtime(){
   if(unsubscribeRequests)unsubscribeRequests();
-  unsubscribeRequests=onSnapshot(collection(db,REQUESTS_COLLECTION),snap=>{requests=snap.docs.map(d=>({id:d.id,...d.data()}));render()},err=>{console.error(err);alert('Errore di sincronizzazione Firestore: '+err.message)});
+  unsubscribeRequests=onSnapshot(collection(db,REQUESTS_COLLECTION),snap=>{requests=snap.docs.map(d=>({id:d.id,...d.data()}));render();if(document.getElementById('statsModal')?.classList.contains('open'))renderStatistics()},err=>{console.error(err);alert('Errore di sincronizzazione Firestore: '+err.message)});
 }
 async function enterApp(user){
   currentUser=user;document.body.classList.remove('app-locked');document.getElementById('authGate').classList.add('hidden');document.getElementById('userEmail').textContent=user.email;document.getElementById('userChip').classList.add('visible');
@@ -464,7 +597,7 @@ onAuthStateChanged(auth,async user=>{
   try{await enterApp(user)}catch(e){console.error(e);lockApp('Errore durante il caricamento Firebase: '+e.message)}
 });
 
-Object.assign(window,{render,openRequest,closeModal,addProductRow,workTypeChanged,calcProduct,saveRequest,toggleArchive,sendGmail,openSettings,addAgentSetting,saveSettings,exportBackup,importBackup});
+Object.assign(window,{render,openRequest,closeModal,addProductRow,workTypeChanged,calcProduct,saveRequest,toggleArchive,deleteRequest,sendGmail,openStatistics,renderStatistics,exportStatisticsPDF,openSettings,addAgentSetting,saveSettings,exportBackup,importBackup});
 </script>
 </body>
 </html>
