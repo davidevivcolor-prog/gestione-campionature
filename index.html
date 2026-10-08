@@ -102,6 +102,9 @@ header{position:sticky}
 .stats-table{min-width:0}.stats-table th,.stats-table td{position:static}
 .trash-btn{color:#a70f15;border-color:#ffd1d3;background:#fff0f0;display:inline-grid;place-items:center}
 .trash-btn:hover{background:#ffe2e4}.trash-btn svg{width:16px;height:16px;pointer-events:none}
+.description-cell{min-width:280px;width:340px;max-width:420px;white-space:normal;word-break:normal;overflow-wrap:break-word;line-height:1.45}
+.stats-period-note{padding:10px 12px;background:#f8fafc;border:1px solid var(--line);border-radius:9px;font-size:12px;color:var(--muted)}
+.stats-toolbar .field{min-width:150px}.stats-toolbar select{min-width:150px}
 @media(max-width:950px){.stats-grid{grid-template-columns:repeat(2,1fr)}.charts-grid{grid-template-columns:1fr}}
 @media(max-width:560px){.stats-grid{grid-template-columns:1fr}}
 
@@ -238,22 +241,24 @@ header{position:sticky}
     <div class="modal-head"><h2>Statistiche richieste campione</h2><button class="icon-btn" onclick="closeModal('statsModal')">✕</button></div>
     <div class="modal-body">
       <div class="stats-toolbar">
-        <div class="field"><label>Anno di analisi</label><select id="statsYear" onchange="renderStatistics()"></select></div>
+        <div class="field"><label>Periodo</label><select id="statsPeriod" onchange="onStatsPeriodChange()"><option value="year">Annuale</option><option value="month">Mensile</option></select></div>
+        <div class="field"><label>Anno</label><select id="statsYear" onchange="renderStatistics()"></select></div>
+        <div class="field" id="statsMonthField" style="display:none"><label>Mese</label><select id="statsMonth" onchange="renderStatistics()"></select></div>
         <button class="btn-primary" onclick="exportStatisticsPDF()">⬇ Scarica report PDF</button>
-        <div class="small muted">Le statistiche usano la data di evasione; se assente, la data di arrivo.</div>
+        <div class="stats-period-note" id="statsPeriodNote">Le statistiche usano la data di evasione; se assente, la data di arrivo.</div>
       </div>
       <div class="stats-grid">
         <div class="stat-card"><div class="n" id="stTotal">0</div><div class="l">Campioni totali</div></div>
         <div class="stat-card"><div class="n" id="stUrgent">0</div><div class="l">Campioni urgenti</div></div>
         <div class="stat-card"><div class="n" id="stNotUrgent">0</div><div class="l">Campioni non urgenti</div></div>
-        <div class="stat-card"><div class="n" id="stMonthlyAvg">0</div><div class="l">Media campioni / mese</div></div>
+        <div class="stat-card"><div class="n" id="stMonthlyAvg">0</div><div class="l" id="stAverageLabel">Media campioni / mese</div></div>
         <div class="stat-card"><div class="n" id="stFollowSent">0</div><div class="l">Follow-up inviati / gestiti</div></div>
         <div class="stat-card"><div class="n" id="stResponses">0</div><div class="l">Risposte con esito</div></div>
         <div class="stat-card"><div class="n" id="stResponseRate">0%</div><div class="l">Tasso risposta ai follow-up</div></div>
         <div class="stat-card"><div class="n" id="stTopProduct">—</div><div class="l">Prodotto più richiesto</div></div>
       </div>
       <div class="charts-grid">
-        <div class="chart-card"><h3>Campioni per mese</h3><div class="chart-wrap"><canvas id="monthlyChart"></canvas></div></div>
+        <div class="chart-card"><h3 id="volumeChartTitle">Campioni per mese</h3><div class="chart-wrap"><canvas id="monthlyChart"></canvas></div></div>
         <div class="chart-card"><h3>Urgenza</h3><div class="chart-wrap"><canvas id="urgencyChart"></canvas></div></div>
         <div class="chart-card"><h3>Esiti dopo follow-up</h3><div class="chart-wrap"><canvas id="outcomeChart"></canvas></div></div>
         <div class="chart-card"><h3>Prodotti più richiesti</h3><div class="chart-wrap"><canvas id="productChart"></canvas></div></div>
@@ -381,7 +386,7 @@ function render(){
     const rem=reminderState(r);const codes=(r.products||[]).map(p=>p.codice).filter(Boolean);
     return `<tr><td><strong>${esc(r.progressivo)}</strong></td><td>${esc(r.agente||'—')}</td><td><strong>${esc(r.cliente||'—')}</strong></td>
       <td>${fmtDate(r.arrivo)}</td><td>${r.urgente==='Sì'?'<span class="badge b-red">SÌ</span>':'No'}</td>
-      <td><span class="badge ${badgeClass(r.stato)}">${esc(r.stato||'—')}</span></td><td style="max-width:330px">${esc(r.descrizione||'—')}</td>
+      <td><span class="badge ${badgeClass(r.stato)}">${esc(r.stato||'—')}</span></td><td class="description-cell">${esc(r.descrizione||'—')}</td>
       <td>${codes.length?codes.map(c=>`<span class="badge b-gray">${esc(c)}</span>`).join(' '):'—'}</td><td>${fmtDate(r.evasione)}</td>
       <td><span class="badge ${rem.cls}">${esc(rem.label)}</span>${rem.due?`<div class="small muted">${fmtDate(rem.due)}</div>`:''}</td>
       <td class="right">${money(requestCost(r))}</td><td><div class="row-actions">
@@ -471,44 +476,76 @@ function isResponseOutcome(esito){
   if(!esito)return false;
   return !['IN ATTESA DI RISCONTRO DAL CLIENTE DOPO 30/60GG','NESSUN RISCONTRO DA CLIENTE/AGENTE'].includes(esito);
 }
-function calculateStatistics(year=statsYearValue()){
-  const yearRows=requests.filter(r=>requestStatDate(r).startsWith(String(year)));
-  const urgent=yearRows.filter(r=>r.urgente==='Sì').length;
-  const notUrgent=yearRows.length-urgent;
-  const monthly=Array(12).fill(0);
-  yearRows.forEach(r=>{const d=requestStatDate(r);const m=Number(d.slice(5,7));if(m>=1&&m<=12)monthly[m-1]++});
-  const now=new Date();const divisor=year===now.getFullYear()?Math.max(1,now.getMonth()+1):12;
-  const monthlyAvg=yearRows.length/divisor;
-  const followRows=yearRows.filter(r=>['inviato','contattato'].includes(r.followStatus));
+function statsPeriodValue(){return document.getElementById('statsPeriod')?.value||'year'}
+function statsMonthValue(){return Number(document.getElementById('statsMonth')?.value)||1}
+function onStatsPeriodChange(){
+  const monthly=statsPeriodValue()==='month';
+  document.getElementById('statsMonthField').style.display=monthly?'flex':'none';
+  renderStatistics();
+}
+function calculateStatistics(year=statsYearValue(),period=statsPeriodValue(),month=statsMonthValue()){
+  const yearPrefix=String(year);
+  const monthPrefix=`${yearPrefix}-${String(month).padStart(2,'0')}`;
+  const periodRows=requests.filter(r=>{
+    const d=requestStatDate(r);
+    return period==='month'?d.startsWith(monthPrefix):d.startsWith(yearPrefix);
+  });
+  const urgent=periodRows.filter(r=>r.urgente==='Sì').length;
+  const notUrgent=periodRows.length-urgent;
+  let volumeLabels=[],volumeData=[],average=0,averageLabel='Media campioni / mese',volumeTitle='Campioni per mese';
+  if(period==='month'){
+    const daysInMonth=new Date(year,month,0).getDate();
+    volumeData=Array(daysInMonth).fill(0);
+    periodRows.forEach(r=>{const d=requestStatDate(r);const day=Number(d.slice(8,10));if(day>=1&&day<=daysInMonth)volumeData[day-1]++});
+    volumeLabels=Array.from({length:daysInMonth},(_,i)=>String(i+1));
+    const now=new Date();
+    const elapsed=(year===now.getFullYear()&&month===now.getMonth()+1)?Math.max(1,now.getDate()):daysInMonth;
+    average=periodRows.length/elapsed;
+    averageLabel='Media campioni / giorno';
+    volumeTitle=`Campioni per giorno - ${MONTH_NAMES[month-1]}`;
+  }else{
+    volumeData=Array(12).fill(0);
+    periodRows.forEach(r=>{const d=requestStatDate(r);const m=Number(d.slice(5,7));if(m>=1&&m<=12)volumeData[m-1]++});
+    volumeLabels=MONTH_NAMES;
+    const now=new Date();const divisor=year===now.getFullYear()?Math.max(1,now.getMonth()+1):12;
+    average=periodRows.length/divisor;
+  }
+  const followRows=periodRows.filter(r=>['inviato','contattato'].includes(r.followStatus));
   const responses=followRows.filter(r=>isResponseOutcome(r.esito));
   const outcomeMap={};
   responses.forEach(r=>{const k=r.esito||'Senza esito';outcomeMap[k]=(outcomeMap[k]||0)+1});
   const productMap={};
-  yearRows.forEach(r=>{const seen=new Set();(r.products||[]).forEach(p=>{const code=(p.codice||'').trim();if(!code)return;if(!productMap[code])productMap[code]={requests:0,qty:0};productMap[code].qty+=Number(p.qty)||0;if(!seen.has(code)){productMap[code].requests++;seen.add(code)}})});
+  periodRows.forEach(r=>{const seen=new Set();(r.products||[]).forEach(p=>{const code=(p.codice||'').trim();if(!code)return;if(!productMap[code])productMap[code]={requests:0,qty:0};productMap[code].qty+=Number(p.qty)||0;if(!seen.has(code)){productMap[code].requests++;seen.add(code)}})});
   const products=Object.entries(productMap).map(([code,v])=>({code,...v})).sort((a,b)=>b.requests-a.requests||b.qty-a.qty||a.code.localeCompare(b.code,'it'));
-  return {year,yearRows,urgent,notUrgent,monthly,monthlyAvg,followRows,responses,responseRate:followRows.length?responses.length/followRows.length*100:0,outcomeMap,products};
+  const periodLabel=period==='month'?`${MONTH_NAMES[month-1]} ${year}`:String(year);
+  return {year,month,period,periodLabel,periodRows,urgent,notUrgent,volumeLabels,volumeData,average,averageLabel,volumeTitle,followRows,responses,responseRate:followRows.length?responses.length/followRows.length*100:0,outcomeMap,products};
 }
 function fillStatsYears(){
   const sel=document.getElementById('statsYear');if(!sel)return;
   const current=new Date().getFullYear();const years=[...new Set(requests.map(r=>Number(requestStatDate(r).slice(0,4))).filter(y=>y>2000&&y<3000).concat([current]))].sort((a,b)=>b-a);
   const keep=Number(sel.value)||current;sel.innerHTML=years.map(y=>`<option value="${y}">${y}</option>`).join('');sel.value=years.includes(keep)?String(keep):String(years[0]);
+  const msel=document.getElementById('statsMonth');
+  if(msel && !msel.options.length){msel.innerHTML=MONTH_NAMES.map((m,i)=>`<option value="${i+1}">${m}</option>`).join('');msel.value=String(new Date().getMonth()+1)}
 }
-function openStatistics(){fillStatsYears();document.getElementById('statsModal').classList.add('open');setTimeout(renderStatistics,0)}
+function openStatistics(){fillStatsYears();document.getElementById('statsModal').classList.add('open');setTimeout(()=>{onStatsPeriodChange()},0)}
 function renderStatistics(){
   fillStatsYears();const data=calculateStatistics();
-  document.getElementById('stTotal').textContent=data.yearRows.length;
+  document.getElementById('stTotal').textContent=data.periodRows.length;
   document.getElementById('stUrgent').textContent=data.urgent;
   document.getElementById('stNotUrgent').textContent=data.notUrgent;
-  document.getElementById('stMonthlyAvg').textContent=data.monthlyAvg.toLocaleString('it-IT',{maximumFractionDigits:1});
+  document.getElementById('stMonthlyAvg').textContent=data.average.toLocaleString('it-IT',{maximumFractionDigits:1});
+  document.getElementById('stAverageLabel').textContent=data.averageLabel;
   document.getElementById('stFollowSent').textContent=data.followRows.length;
   document.getElementById('stResponses').textContent=data.responses.length;
   document.getElementById('stResponseRate').textContent=data.responseRate.toLocaleString('it-IT',{maximumFractionDigits:1})+'%';
   document.getElementById('stTopProduct').textContent=data.products[0]?.code||'—';
-  document.getElementById('topProductsRows').innerHTML=data.products.slice(0,15).map(p=>`<tr><td><strong>${esc(p.code)}</strong></td><td>${p.requests}</td><td>${Number(p.qty).toLocaleString('it-IT',{maximumFractionDigits:2})}</td></tr>`).join('')||'<tr><td colspan="3" class="muted">Nessun prodotto disponibile per l’anno selezionato.</td></tr>';
+  document.getElementById('volumeChartTitle').textContent=data.volumeTitle;
+  document.getElementById('statsPeriodNote').textContent=`Periodo analizzato: ${data.periodLabel}. Le statistiche usano la data di evasione; se assente, la data di arrivo.`;
+  document.getElementById('topProductsRows').innerHTML=data.products.slice(0,15).map(p=>`<tr><td><strong>${esc(p.code)}</strong></td><td>${p.requests}</td><td>${Number(p.qty).toLocaleString('it-IT',{maximumFractionDigits:2})}</td></tr>`).join('')||'<tr><td colspan="3" class="muted">Nessun prodotto disponibile per il periodo selezionato.</td></tr>';
   destroyStatsCharts();
   if(!window.Chart)return;
   const common={responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'bottom'}}};
-  statsCharts.monthly=new Chart(document.getElementById('monthlyChart'),{type:'bar',data:{labels:MONTH_NAMES,datasets:[{label:'Campioni',data:data.monthly}]},options:{...common,scales:{y:{beginAtZero:true,ticks:{precision:0}}}}});
+  statsCharts.monthly=new Chart(document.getElementById('monthlyChart'),{type:'bar',data:{labels:data.volumeLabels,datasets:[{label:'Campioni',data:data.volumeData}]},options:{...common,scales:{y:{beginAtZero:true,ticks:{precision:0}}}}});
   statsCharts.urgency=new Chart(document.getElementById('urgencyChart'),{type:'doughnut',data:{labels:['Urgenti','Non urgenti'],datasets:[{data:[data.urgent,data.notUrgent]}]},options:common});
   const outcomes=Object.entries(data.outcomeMap).sort((a,b)=>b[1]-a[1]);
   statsCharts.outcomes=new Chart(document.getElementById('outcomeChart'),{type:'bar',data:{labels:outcomes.map(x=>x[0]),datasets:[{label:'Risposte',data:outcomes.map(x=>x[1])}]},options:{...common,indexAxis:'y',scales:{x:{beginAtZero:true,ticks:{precision:0}}},plugins:{legend:{display:false}}}});
@@ -517,22 +554,49 @@ function renderStatistics(){
 }
 async function exportStatisticsPDF(){
   if(!window.jspdf?.jsPDF){alert('Libreria PDF non disponibile. Controlla la connessione internet e riprova.');return}
-  renderStatistics();await new Promise(r=>setTimeout(r,250));
-  const data=calculateStatistics();const {jsPDF}=window.jspdf;const pdf=new jsPDF({orientation:'portrait',unit:'mm',format:'a4'});
-  const margin=14;let y=16;const pageW=210;
-  pdf.setFont('helvetica','bold');pdf.setFontSize(17);pdf.text('VivColor - Report statistiche campioni',margin,y);y+=8;
-  pdf.setFont('helvetica','normal');pdf.setFontSize(10);pdf.text(`Anno: ${data.year}   Generato il: ${new Date().toLocaleDateString('it-IT')}`,margin,y);y+=8;
-  pdf.setFontSize(11);
-  const summary=[`Campioni totali: ${data.yearRows.length}`,`Urgenti: ${data.urgent}   Non urgenti: ${data.notUrgent}`,`Media campioni/mese: ${data.monthlyAvg.toLocaleString('it-IT',{maximumFractionDigits:1})}`,`Follow-up inviati/gestiti: ${data.followRows.length}`,`Risposte con esito: ${data.responses.length}`,`Tasso risposta: ${data.responseRate.toLocaleString('it-IT',{maximumFractionDigits:1})}%`,`Prodotto piu richiesto: ${data.products[0]?.code||'—'}`];
-  summary.forEach(t=>{pdf.text(t,margin,y);y+=6});y+=3;
-  const addChart=(canvas,title)=>{if(!canvas)return;const img=canvas.toDataURL('image/png',1);if(y+72>285){pdf.addPage();y=16}pdf.setFont('helvetica','bold');pdf.setFontSize(12);pdf.text(title,margin,y);y+=4;pdf.addImage(img,'PNG',margin,y,pageW-margin*2,62);y+=68};
-  addChart(document.getElementById('monthlyChart'),'Campioni per mese');
-  addChart(document.getElementById('urgencyChart'),'Urgenza');
-  addChart(document.getElementById('outcomeChart'),'Esiti dopo follow-up');
-  addChart(document.getElementById('productChart'),'Prodotti piu richiesti');
-  if(y+20>285){pdf.addPage();y=16}pdf.setFont('helvetica','bold');pdf.setFontSize(12);pdf.text('Top prodotti',margin,y);y+=7;pdf.setFont('helvetica','normal');pdf.setFontSize(9);
-  data.products.slice(0,15).forEach((p,i)=>{if(y>282){pdf.addPage();y=16}pdf.text(`${i+1}. ${p.code} - ${p.requests} richieste - ${Number(p.qty).toLocaleString('it-IT',{maximumFractionDigits:2})} Kg`,margin,y);y+=5});
-  pdf.save(`vivcolor-report-campioni-${data.year}-${isoToday()}.pdf`);
+  renderStatistics();await new Promise(r=>setTimeout(r,300));
+  const data=calculateStatistics();const {jsPDF}=window.jspdf;
+  const pdf=new jsPDF({orientation:'landscape',unit:'mm',format:'a4'});
+  const W=297,H=210,margin=14,contentW=W-margin*2;
+  const red=[179,19,25],dark=[32,37,43],muted=[95,103,112],light=[248,250,252],line=[229,231,235];
+  const addHeader=(subtitle='')=>{
+    pdf.setFillColor(...red);pdf.rect(0,0,W,18,'F');
+    pdf.setTextColor(255,255,255);pdf.setFont('helvetica','bold');pdf.setFontSize(16);pdf.text('VivColor | Report statistiche campioni',margin,11.5);
+    pdf.setTextColor(...muted);pdf.setFont('helvetica','normal');pdf.setFontSize(9);pdf.text(subtitle,margin,25);
+    pdf.setDrawColor(...line);pdf.line(margin,29,W-margin,29);
+  };
+  const addFooter=()=>{
+    pdf.setDrawColor(...line);pdf.line(margin,H-10,W-margin,H-10);
+    pdf.setTextColor(...muted);pdf.setFontSize(8);pdf.text(`Generato il ${new Date().toLocaleString('it-IT')}`,margin,H-5);
+    pdf.text(`Pagina ${pdf.getNumberOfPages()}`,W-margin,H-5,{align:'right'});
+  };
+  addHeader(`Periodo analizzato: ${data.periodLabel}`);
+  let y=35;
+  const cards=[
+    ['Campioni totali',data.periodRows.length],['Urgenti',data.urgent],['Non urgenti',data.notUrgent],[data.averageLabel,data.average.toLocaleString('it-IT',{maximumFractionDigits:1})],
+    ['Follow-up',data.followRows.length],['Risposte',data.responses.length],['Tasso risposta',data.responseRate.toLocaleString('it-IT',{maximumFractionDigits:1})+'%'],['Top prodotto',data.products[0]?.code||'—']
+  ];
+  const gap=4,cols=4,cw=(contentW-gap*(cols-1))/cols,ch=22;
+  cards.forEach((c,i)=>{const col=i%cols,row=Math.floor(i/cols);const x=margin+col*(cw+gap),yy=y+row*(ch+4);pdf.setFillColor(...light);pdf.setDrawColor(...line);pdf.roundedRect(x,yy,cw,ch,2,2,'FD');pdf.setTextColor(...muted);pdf.setFontSize(8.5);pdf.setFont('helvetica','normal');pdf.text(c[0],x+4,yy+6);pdf.setTextColor(...dark);pdf.setFontSize(15);pdf.setFont('helvetica','bold');let val=String(c[1]);if(val.length>18){pdf.setFontSize(10);val=pdf.splitTextToSize(val,cw-8)[0]}pdf.text(val,x+4,yy+16)});
+  y+=52;
+  const addChartBox=(canvas,title,x,y,w,h)=>{pdf.setFillColor(255,255,255);pdf.setDrawColor(...line);pdf.roundedRect(x,y,w,h,2,2,'FD');pdf.setTextColor(...dark);pdf.setFont('helvetica','bold');pdf.setFontSize(10);pdf.text(title,x+4,y+7);if(canvas){const img=canvas.toDataURL('image/png',1);pdf.addImage(img,'PNG',x+4,y+10,w-8,h-14)}};
+  const boxGap=6,bw=(contentW-boxGap)/2,bh=54;
+  addChartBox(document.getElementById('monthlyChart'),data.volumeTitle,margin,y,bw,bh);
+  addChartBox(document.getElementById('urgencyChart'),'Distribuzione urgenza',margin+bw+boxGap,y,bw,bh);
+  y+=bh+6;
+  addChartBox(document.getElementById('outcomeChart'),'Esiti dopo follow-up',margin,y,bw,bh);
+  addChartBox(document.getElementById('productChart'),'Prodotti più richiesti',margin+bw+boxGap,y,bw,bh);
+  addFooter();
+  pdf.addPage();addHeader(`Dettaglio prodotti | ${data.periodLabel}`);y=36;
+  pdf.setTextColor(...dark);pdf.setFont('helvetica','bold');pdf.setFontSize(12);pdf.text('Classifica prodotti più richiesti',margin,y);y+=7;
+  const colsX=[margin,margin+125,margin+175];
+  pdf.setFillColor(...light);pdf.rect(margin,y-5,contentW,8,'F');pdf.setFontSize(9);pdf.text('Prodotto',colsX[0]+2,y);pdf.text('N. richieste',colsX[1],y);pdf.text('Quantità totale Kg',colsX[2],y);y+=7;
+  pdf.setFont('helvetica','normal');pdf.setFontSize(9);
+  data.products.slice(0,30).forEach((p,i)=>{if(y>H-17){addFooter();pdf.addPage();addHeader(`Dettaglio prodotti | ${data.periodLabel}`);y=36}if(i%2===1){pdf.setFillColor(252,252,253);pdf.rect(margin,y-4.5,contentW,6,'F')}pdf.setTextColor(...dark);const code=pdf.splitTextToSize(`${i+1}. ${p.code}`,115)[0];pdf.text(code,colsX[0]+2,y);pdf.text(String(p.requests),colsX[1],y);pdf.text(Number(p.qty).toLocaleString('it-IT',{maximumFractionDigits:2}),colsX[2],y);y+=6});
+  if(!data.products.length){pdf.setTextColor(...muted);pdf.text('Nessun prodotto disponibile per il periodo selezionato.',margin,y)}
+  addFooter();
+  const suffix=data.period==='month'?`${data.year}-${String(data.month).padStart(2,'0')}`:String(data.year);
+  pdf.save(`vivcolor-report-campioni-${suffix}-${isoToday()}.pdf`);
 }
 
 function openSettings(){const box=document.getElementById('agentSettings');box.innerHTML='';settings.agents.forEach(a=>appendAgentRow(a.name,a.email));document.getElementById('settingsModal').classList.add('open')}
