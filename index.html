@@ -178,7 +178,7 @@ main,footer{position:relative;z-index:1}
       <table>
         <thead><tr>
           <th>N°</th><th>Agente</th><th>Cliente</th><th>Arrivo</th><th>Urgenza</th><th>Stato</th>
-          <th>Descrizione</th><th>Esito</th><th>Prodotti</th><th>Evasione</th><th>Follow-up</th><th>Costo €</th><th>Azioni</th>
+          <th>Descrizione</th><th>Prodotti</th><th>Evasione</th><th>Esito</th><th>Follow-up</th><th>Costo €</th><th>Azioni</th>
         </tr></thead>
         <tbody id="requestRows"></tbody>
       </table>
@@ -359,6 +359,7 @@ function badgeClass(status){
   return'b-yellow';
 }
 function reminderState(r){
+  if(hasOutcome(r))return {label:'ESITO OK',cls:'',due:''};
   if(!r.evasione) return {label:'—',cls:'b-gray',due:''};
   const due=addDays(r.evasione,30);
   if(r.followStatus==='inviato'||r.followStatus==='contattato'||r.followStatus==='non_necessario')
@@ -450,9 +451,9 @@ function render(){
     const rem=reminderState(r);const codes=(r.products||[]).map(p=>p.codice).filter(Boolean);
     return `<tr><td><strong>${esc(r.progressivo)}</strong></td><td>${esc(r.agente||'—')}</td><td><strong>${esc(r.cliente||'—')}</strong></td>
       <td>${fmtDate(r.arrivo)}</td><td>${r.urgente==='Sì'?'<span class="badge b-red">SÌ</span>':'No'}</td>
-      <td><span class="badge ${badgeClass(r.stato)}">${esc(r.stato||'—')}</span></td><td class="description-cell">${esc(r.descrizione||'—')}</td><td class="outcome-cell">${hasOutcome(r)?`<div class="outcome-highlight">${esc(r.esito)}</div>`:'—'}</td>
-      <td>${codes.length?codes.map(c=>`<span class="badge b-gray">${esc(c)}</span>`).join(' '):'—'}</td><td>${fmtDate(r.evasione)}</td>
-      <td><span class="badge ${rem.cls}">${esc(rem.label)}</span>${rem.due?`<div class="small muted">${fmtDate(rem.due)}</div>`:''}</td>
+      <td><span class="badge ${badgeClass(r.stato)}">${esc(r.stato||'—')}</span></td><td class="description-cell">${esc(r.descrizione||'—')}</td>
+      <td>${codes.length?codes.map(c=>`<span class="badge b-gray">${esc(c)}</span>`).join(' '):'—'}</td><td>${fmtDate(r.evasione)}</td><td class="outcome-cell">${hasOutcome(r)?`<div class="outcome-highlight">${esc(r.esito)}</div>`:'—'}</td>
+      <td>${hasOutcome(r)?'<strong>ESITO OK</strong>':`<span class="badge ${rem.cls}">${esc(rem.label)}</span>`}${rem.due?`<div class="small muted">${fmtDate(rem.due)}</div>`:''}</td>
       <td class="right">${money(requestCost(r))}</td><td><div class="row-actions">
         <button class="icon-btn" onclick="openRequest('${r.id}')">✎</button>
         ${r.evasione?`<button class="icon-btn" title="Prepara email in Gmail" onclick="sendGmail('${r.id}')">✉</button>`:''}
@@ -731,7 +732,7 @@ onAuthStateChanged(auth,async user=>{
   try{await enterApp(user)}catch(e){console.error(e);lockApp('Errore durante il caricamento Firebase: '+e.message)}
 });
 
-Object.assign(window,{render,openRequest,closeModal,addProductRow,workTypeChanged,calcProduct,saveRequest,toggleArchive,deleteRequest,sendGmail,openStatistics,renderStatistics,exportStatisticsPDF,openSettings,addAgentSetting,saveSettings,exportBackup,importBackup});
+Object.assign(window,{render,openRequest,closeModal,addProductRow,workTypeChanged,calcProduct,saveRequest,toggleArchive,deleteRequest,sendGmail,openStatistics,onStatsPeriodChange,renderStatistics,exportStatisticsPDF,openSettings,addAgentSetting,saveSettings,exportBackup,importBackup});
 </script>
 </body>
 </html>
