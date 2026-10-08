@@ -108,6 +108,27 @@ header{position:sticky}
 @media(max-width:950px){.stats-grid{grid-template-columns:repeat(2,1fr)}.charts-grid{grid-template-columns:1fr}}
 @media(max-width:560px){.stats-grid{grid-template-columns:1fr}}
 
+
+/* La testata rimane opaca e sopra ogni riga durante lo scorrimento. */
+header{position:sticky;top:0;z-index:100;background:#fff;isolation:isolate;box-shadow:0 3px 12px rgba(0,0,0,.06)}
+header::before{content:"";position:absolute;inset:0;background:#fff;z-index:-1}
+main{position:relative;z-index:0}
+.table-wrap{position:relative;isolation:isolate}
+/* Campi filtro aggiuntivi, leggibili anche su schermi piccoli. */
+.filters input[type="date"]{min-width:150px;width:155px}
+.filters .filter-date-label{display:flex;align-items:center;gap:6px;font-size:12px;font-weight:650;color:#4b5563}
+.filters #filterFollowStatus{min-width:185px}
+@media(max-width:650px){.filters .filter-date-label{width:100%}.filters input[type="date"]{flex:1;width:auto;min-width:0}}
+
+/* Esito immediatamente identificabile nell'elenco richieste */
+.outcome-cell{min-width:240px;max-width:340px;vertical-align:middle}
+.outcome-box{display:block;border-left:5px solid #2463eb;background:#eaf1ff;color:#153f89;border-radius:8px;padding:9px 11px;box-shadow:0 1px 4px rgba(0,0,0,.07)}
+.outcome-box.outcome-positive{background:#dff4e8;color:#17683e;border-left-color:#198754}
+.outcome-box.outcome-negative{background:#ffe2e4;color:#94131b;border-left-color:#b31319}
+.outcome-box.outcome-pending{background:#fff3d7;color:#805600;border-left-color:#d79b00}
+.outcome-title{display:block;font-size:12px;font-weight:850;line-height:1.4;overflow-wrap:anywhere}
+.outcome-note{font-size:11px;font-weight:550;margin-top:5px;padding-top:5px;border-top:1px solid currentColor;overflow-wrap:anywhere}
+.outcome-empty{color:#9ca3af;font-size:12px}
 </style>
 </head>
 <body class="app-locked">
@@ -153,6 +174,16 @@ header{position:sticky}
         <input id="search" placeholder="Cerca cliente, agente, codice, descrizione..." oninput="render()">
         <select id="filterStatus" onchange="render()"><option value="">Tutti gli stati</option></select>
         <select id="filterAgent" onchange="render()"><option value="">Tutti gli agenti</option></select>
+        <label class="filter-date-label" for="filterEvasioneFrom">Evasione dal <input id="filterEvasioneFrom" type="date" onchange="render()" aria-label="Data evasione dal"></label>
+        <label class="filter-date-label" for="filterEvasioneTo">al <input id="filterEvasioneTo" type="date" onchange="render()" aria-label="Data evasione al"></label>
+        <select id="filterFollowStatus" onchange="render()" aria-label="Filtra stato follow-up">
+          <option value="">Tutti i follow-up</option>
+          <option value="da_fare">Da fare</option>
+          <option value="inviato">Inviato</option>
+          <option value="contattato">Cliente contattato</option>
+          <option value="non_necessario">Non necessario</option>
+          <option value="senza_evasione">Senza evasione</option>
+        </select>
         <select id="filterArchive" onchange="render()">
           <option value="active">Attive</option>
           <option value="all">Tutte</option>
@@ -165,7 +196,7 @@ header{position:sticky}
       <table>
         <thead><tr>
           <th>N°</th><th>Agente</th><th>Cliente</th><th>Arrivo</th><th>Urgenza</th><th>Stato</th>
-          <th>Descrizione</th><th>Prodotti</th><th>Evasione</th><th>Follow-up</th><th>Costo €</th><th>Azioni</th>
+          <th>Descrizione</th><th>Prodotti</th><th>Evasione</th><th>Follow-up</th><th>Esito cliente / richiesta</th><th>Costo €</th><th>Azioni</th>
         </tr></thead>
         <tbody id="requestRows"></tbody>
       </table>
@@ -370,14 +401,37 @@ function refreshAgentSelects(){
   document.getElementById('filterAgent').innerHTML='<option value="">Tutti gli agenti</option>'+names.map(s=>`<option>${esc(s)}</option>`).join('');
   document.getElementById('fAgente').innerHTML='<option value="">— Seleziona —</option>'+names.map(s=>`<option>${esc(s)}</option>`).join('');
 }
+function outcomeClass(value){
+  const v=String(value||'').toUpperCase();
+  if(/IN ATTESA|NESSUN RISCONTRO/.test(v))return 'outcome-pending';
+  if(/NEGATIV|NON RISOLTA/.test(v))return 'outcome-negative';
+  if(/POSITIV|VENDITA|PAGAMENTO|PRODUZIONE DIRETTA|CONFORMITÀ RISOLTA/.test(v))return 'outcome-positive';
+  return '';
+}
+function outcomeMarkup(r){
+  const label=String(r.esito||'').trim();
+  const note=String(r.noteEsito||'').trim();
+  if(!label&&!note)return '<span class="outcome-empty">—</span>';
+  return `<div class="outcome-box ${outcomeClass(label)}" title="${esc([label,note].filter(Boolean).join(' — '))}">
+    <span class="outcome-title">${esc(label||'ESITO ANNOTATO')}</span>
+    ${note?`<div class="outcome-note">${esc(note)}</div>`:''}
+  </div>`;
+}
 function render(){
   const q=document.getElementById('search').value.trim().toLowerCase();
   const fs=document.getElementById('filterStatus').value;
   const fa=document.getElementById('filterAgent').value;
   const ar=document.getElementById('filterArchive').value;
+  const evasioneFrom=document.getElementById('filterEvasioneFrom').value;
+  const evasioneTo=document.getElementById('filterEvasioneTo').value;
+  const followFilter=document.getElementById('filterFollowStatus').value;
   const filtered=requests.filter(r=>{
     const blob=[r.progressivo,r.agente,r.cliente,r.descrizione,r.note,r.esito,r.noteEsito,...(r.products||[]).flatMap(p=>[p.codice,p.lavorazione])].join(' ').toLowerCase();
     if(q && !blob.includes(q))return false;if(fs && r.stato!==fs)return false;if(fa && r.agente!==fa)return false;
+    if(evasioneFrom && (!r.evasione || r.evasione<evasioneFrom))return false;
+    if(evasioneTo && (!r.evasione || r.evasione>evasioneTo))return false;
+    if(followFilter==='senza_evasione' && r.evasione)return false;
+    if(followFilter && followFilter!=='senza_evasione' && (!r.evasione || (r.followStatus||'da_fare')!==followFilter))return false;
     if(ar==='active' && r.archived)return false;if(ar==='archived' && !r.archived)return false;return true;
   }).sort((a,b)=>(Number(b.progressivo)||0)-(Number(a.progressivo)||0));
 
@@ -389,6 +443,7 @@ function render(){
       <td><span class="badge ${badgeClass(r.stato)}">${esc(r.stato||'—')}</span></td><td class="description-cell">${esc(r.descrizione||'—')}</td>
       <td>${codes.length?codes.map(c=>`<span class="badge b-gray">${esc(c)}</span>`).join(' '):'—'}</td><td>${fmtDate(r.evasione)}</td>
       <td><span class="badge ${rem.cls}">${esc(rem.label)}</span>${rem.due?`<div class="small muted">${fmtDate(rem.due)}</div>`:''}</td>
+      <td class="outcome-cell">${outcomeMarkup(r)}</td>
       <td class="right">${money(requestCost(r))}</td><td><div class="row-actions">
         <button class="icon-btn" onclick="openRequest('${r.id}')">✎</button>
         ${r.evasione?`<button class="icon-btn" title="Prepara email in Gmail" onclick="sendGmail('${r.id}')">✉</button>`:''}
