@@ -111,7 +111,8 @@ header{position:sticky}
 /* Keep the logo above the content stacking context. */
 header{position:sticky;top:0;z-index:30;background:#fff}
 main,footer{position:relative;z-index:1}
-.outcome-highlight{display:block;border-left:5px solid var(--red);background:#fff0d6;color:#703b00;padding:9px 12px;margin-top:8px;border-radius:6px;font-weight:750;overflow-wrap:anywhere}
+.outcome-highlight{display:block;border-left:5px solid var(--red);background:#fff0d6;color:#703b00;padding:9px 12px;margin-top:0;border-radius:6px;font-weight:750;overflow-wrap:anywhere}
+.outcome-cell{min-width:240px;max-width:320px;white-space:normal}
 .filters label{font-size:12px;display:flex;flex-direction:column;gap:4px}
 .filters input[type=date]{min-width:150px}
 </style>
@@ -177,7 +178,7 @@ main,footer{position:relative;z-index:1}
       <table>
         <thead><tr>
           <th>N°</th><th>Agente</th><th>Cliente</th><th>Arrivo</th><th>Urgenza</th><th>Stato</th>
-          <th>Descrizione</th><th>Prodotti</th><th>Evasione</th><th>Follow-up</th><th>Costo €</th><th>Azioni</th>
+          <th>Descrizione</th><th>Esito</th><th>Prodotti</th><th>Evasione</th><th>Follow-up</th><th>Costo €</th><th>Azioni</th>
         </tr></thead>
         <tbody id="requestRows"></tbody>
       </table>
@@ -320,8 +321,8 @@ const LEGACY_STORAGE_KEY='vivcolor_campioni_v1';
 const LEGACY_SETTINGS_KEY='vivcolor_campioni_settings_v1';
 
 const STATI=['LAVORO TERMINATO','IN LAVORAZIONE','LAVORO FERMO','ABBANDONATO','IN ATTESA DI DATI'];
-const AUTO_OUTCOME='nessun riscontro da parte del cliente';
-const ESITI=[AUTO_OUTCOME,
+const AUTO_OUTCOME='NESSUN RISCONTRO DA CLIENTE/AGENTE';
+const ESITI=[
 'PROVATO CON ESITO POSITIVO CHE HA PORTATO AD UNA VENDITA',
 'PROVATO CON ESITO POSITIVO MA SENZA VENDITA',
 'PROVATO CON ESITO NEGATIVO DAL CLIENTE',
@@ -449,7 +450,7 @@ function render(){
     const rem=reminderState(r);const codes=(r.products||[]).map(p=>p.codice).filter(Boolean);
     return `<tr><td><strong>${esc(r.progressivo)}</strong></td><td>${esc(r.agente||'—')}</td><td><strong>${esc(r.cliente||'—')}</strong></td>
       <td>${fmtDate(r.arrivo)}</td><td>${r.urgente==='Sì'?'<span class="badge b-red">SÌ</span>':'No'}</td>
-      <td><span class="badge ${badgeClass(r.stato)}">${esc(r.stato||'—')}</span></td><td class="description-cell">${esc(r.descrizione||'—')}${hasOutcome(r)?`<div class="outcome-highlight"><span class="small">ESITO</span><br>${esc(r.esito)}</div>`:''}</td>
+      <td><span class="badge ${badgeClass(r.stato)}">${esc(r.stato||'—')}</span></td><td class="description-cell">${esc(r.descrizione||'—')}</td><td class="outcome-cell">${hasOutcome(r)?`<div class="outcome-highlight">${esc(r.esito)}</div>`:'—'}</td>
       <td>${codes.length?codes.map(c=>`<span class="badge b-gray">${esc(c)}</span>`).join(' '):'—'}</td><td>${fmtDate(r.evasione)}</td>
       <td><span class="badge ${rem.cls}">${esc(rem.label)}</span>${rem.due?`<div class="small muted">${fmtDate(rem.due)}</div>`:''}</td>
       <td class="right">${money(requestCost(r))}</td><td><div class="row-actions">
