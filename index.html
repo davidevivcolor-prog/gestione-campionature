@@ -116,6 +116,22 @@ main,footer{position:relative;z-index:1}
 .outcome-notes-cell{min-width:240px;max-width:360px;white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.45}
 .filters label{font-size:12px;display:flex;flex-direction:column;gap:4px}
 .filters input[type=date]{min-width:150px}
+/* Scorrimento dell'elenco: barre accessibili e intestazioni sempre visibili. */
+#requestTableWrap{max-height:68vh;max-height:68dvh;overflow:auto;scrollbar-gutter:stable;isolation:isolate}
+#requestTableWrap table{border-collapse:separate;border-spacing:0}
+#requestTableWrap th{position:sticky;top:0;z-index:3;background:#f8fafc;box-shadow:0 1px 0 var(--line);white-space:nowrap}
+#requestTableWrap:focus-visible,#tableScrollTop:focus-visible{outline:3px solid var(--blue);outline-offset:-3px}
+.table-scroll-tools{padding:9px 16px;background:#f8fafc;border-bottom:1px solid var(--line)}
+.table-scroll-tools p{margin:0 0 5px;color:var(--muted);font-size:12px}
+#tableScrollTop{overflow-x:auto;overflow-y:hidden;min-height:20px}
+#tableScrollTopInner{height:1px}
+#requestTableWrap,#tableScrollTop{scrollbar-width:auto;scrollbar-color:#88939f #edf0f4}
+#requestTableWrap::-webkit-scrollbar,#tableScrollTop::-webkit-scrollbar{height:14px;width:14px}
+#requestTableWrap::-webkit-scrollbar-track,#tableScrollTop::-webkit-scrollbar-track{background:#edf0f4}
+#requestTableWrap::-webkit-scrollbar-thumb,#tableScrollTop::-webkit-scrollbar-thumb{background:#88939f;border:3px solid #edf0f4;border-radius:8px}
+#requestTableWrap tbody tr:nth-child(even) td{background:#fafbfc}
+#requestTableWrap tbody tr:hover td{background:#f0f4fa}
+@media(max-width:650px){main{padding:12px}.panel-head{padding:12px}.filters{width:100%}.filters>input,.filters>select{width:100%}.filters label{flex:1;min-width:135px}.filters input[type=date]{min-width:0;width:100%}#requestTableWrap{max-height:65vh}}
 </style>
 </head>
 <body class="app-locked">
@@ -175,7 +191,11 @@ main,footer{position:relative;z-index:1}
       </div>
       <div class="small muted" id="countLabel"></div>
     </div>
-    <div class="table-wrap">
+    <div class="table-scroll-tools" id="tableScrollTools" hidden>
+      <p id="tableScrollHint">Scorri orizzontalmente per vedere tutte le colonne. Puoi usare anche le frecce della tastiera dopo aver selezionato la tabella.</p>
+      <div id="tableScrollTop" tabindex="0" role="region" aria-label="Scorrimento orizzontale elenco campioni"><div id="tableScrollTopInner"></div></div>
+    </div>
+    <div class="table-wrap" id="requestTableWrap" tabindex="0" role="region" aria-label="Elenco campioni, scorrimento orizzontale e verticale" aria-describedby="tableScrollHint">
       <table>
         <thead><tr>
           <th>N°</th><th>Agente</th><th>Cliente</th><th>Arrivo</th><th>Urgenza</th><th>Stato</th>
@@ -466,6 +486,7 @@ function render(){
   document.getElementById('empty').hidden=filtered.length>0;
   document.getElementById('countLabel').textContent=`${filtered.length} richieste visualizzate`;
   updateKpis();
+  requestAnimationFrame(updateTableScroll);
 }
 function updateKpis(){
   const active=requests.filter(r=>!r.archived);const month=isoToday().slice(0,7);
@@ -721,6 +742,29 @@ async function doLogin(){
 setInterval(()=>{void applyAutomaticOutcomes()},60000);
 window.addEventListener('online',()=>{void applyAutomaticOutcomes()});
 document.addEventListener('visibilitychange',()=>{if(!document.hidden)void applyAutomaticOutcomes()});
+function updateTableScroll(){
+  const wrap=document.getElementById('requestTableWrap');
+  const top=document.getElementById('tableScrollTop');
+  const tools=document.getElementById('tableScrollTools');
+  if(!wrap||!top)return;
+  const overflow=wrap.scrollWidth>wrap.clientWidth+1;
+  tools.hidden=!overflow;
+  if(overflow){
+    // Match the two scroll ranges even when the vertical scrollbar occupies space.
+    document.getElementById('tableScrollTopInner').style.width=(wrap.scrollWidth-wrap.clientWidth+top.clientWidth)+'px';
+    top.scrollLeft=wrap.scrollLeft;
+  }
+}
+function initTableScroll(){
+  const wrap=document.getElementById('requestTableWrap');
+  const top=document.getElementById('tableScrollTop');
+  wrap.addEventListener('scroll',()=>{if(Math.abs(top.scrollLeft-wrap.scrollLeft)>1)top.scrollLeft=wrap.scrollLeft},{passive:true});
+  top.addEventListener('scroll',()=>{if(Math.abs(wrap.scrollLeft-top.scrollLeft)>1)wrap.scrollLeft=top.scrollLeft},{passive:true});
+  window.addEventListener('resize',updateTableScroll);
+  if(window.ResizeObserver){const observer=new ResizeObserver(updateTableScroll);observer.observe(wrap);observer.observe(wrap.querySelector('table'))}
+  updateTableScroll();
+}
+initTableScroll();
 initStaticUI();
 document.getElementById('loginBtn').addEventListener('click',doLogin);
 document.getElementById('logoutBtn').addEventListener('click',()=>signOut(auth));
